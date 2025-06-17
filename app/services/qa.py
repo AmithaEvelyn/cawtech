@@ -1,5 +1,5 @@
 import google.generativeai as genai
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import logging
 from ..config import settings
 from .embedding import EmbeddingService
@@ -16,9 +16,15 @@ class QAService:
         if not settings.GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY is not set")
             
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel('gemini-pro')
-        
+        try:
+            logger.info("Initializing Gemini API...")
+            genai.configure(api_key=settings.GOOGLE_API_KEY)
+            self.model = genai.GenerativeModel(model_name='gemini-pro')
+            logger.info("Gemini API initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing Gemini API: {str(e)}")
+            raise
+            
         # Initialize services
         self.embedding_service = EmbeddingService()
         self.memory_service = MemoryService()
@@ -37,15 +43,30 @@ class QAService:
             # Get conversation history if available
             conversation_history = []
             if conversation_id:
-                conversation_history = self.memory_service.get_conversation_history(
-                    conversation_id,
-                    settings.SHORT_TERM_MEMORY_SIZE
-                )
-                logger.info(f"Retrieved conversation history with {len(conversation_history)} entries")
+                try:
+                    conversation_history = self.memory_service.get_conversation_history(
+                        conversation_id,
+                        settings.SHORT_TERM_MEMORY_SIZE
+                    )
+                    logger.info(f"Retrieved conversation history with {len(conversation_history)} entries")
+                except Exception as e:
+                    logger.warning(f"Error retrieving conversation history: {str(e)}")
+                    conversation_history = []
 
             # Search for relevant chunks
-            relevant_chunks = self.embedding_service.search_similar_chunks(question)
-            logger.info(f"Found {len(relevant_chunks)} relevant chunks")
+            try:
+                relevant_chunks = self.embedding_service.search_similar_chunks(question)
+                logger.info(f"Found {len(relevant_chunks)} relevant chunks")
+                if relevant_chunks:
+                    logger.info(f"First chunk preview: {relevant_chunks[0]['text'][:100]}...")
+            except Exception as e:
+                logger.error(f"Error searching for relevant chunks: {str(e)}")
+                return {
+                    'answer': "I encountered an error while searching for relevant information. Please try again.",
+                    'confidence': 0.0,
+                    'sources': [],
+                    'conversation_id': conversation_id or str(uuid.uuid4())
+                }
             
             if not relevant_chunks:
                 logger.warning("No relevant chunks found for the question")
@@ -58,6 +79,7 @@ class QAService:
             
             # Prepare context from chunks
             context = "\n".join([chunk['text'] for chunk in relevant_chunks])
+            logger.info(f"Prepared context with {len(context)} characters")
             
             # Prepare conversation history
             history_text = ""
@@ -65,6 +87,7 @@ class QAService:
                 history_text = "\n".join([
                     f"Q: {q}\nA: {a}" for q, a in conversation_history
                 ])
+                logger.info(f"Prepared conversation history with {len(history_text)} characters")
 
             # Construct prompt with better instructions
             prompt = f"""You are an AI assistant that answers questions based on the provided context. 
@@ -91,46 +114,64 @@ Please provide your answer:"""
 
             # Generate answer
             try:
-                logger.info("Generating answer using Gemini")
-                response = self.model.generate_content(
-                    contents=[prompt],
-                    generation_config={
-                        'temperature': 0.7,
-                        'top_p': 0.8,
-                        'top_k': 40,
-                        'max_output_tokens': 1024,
+                logger.info("Generating answer using Gemini...")
+                logger.info(f"Prompt length: {len(prompt)} characters")
+                response = self.model.generate_content(prompt)
+                
+                if not response or not response.text:
+                    logger.error("Empty response from Gemini")
+                    return {
+                        'answer': "I apologize, but I couldn't generate a proper response. Please try again.",
+                        'confidence': 0.0,
+                        'sources': [],
+                        'conversation_id': conversation_id or str(uuid.uuid4())
                     }
-                )
-                answer = response.text
-                logger.info("Successfully generated answer")
+                
+                # Extract answer and confidence
+                answer = response.text.strip()
+                confidence = 0.8  # Default confidence for now
+                
+                # Store in memory
+                if conversation_id:
+                    try:
+                        self.memory_service.add_to_conversation(
+                            conversation_id,
+                            question,
+                            answer
+                        )
+                        logger.info("Stored conversation in memory")
+                    except Exception as e:
+                        logger.warning(f"Error storing conversation: {str(e)}")
+
+                return {
+                    'answer': answer,
+                    'confidence': confidence,
+                    'sources': [
+                        {
+                            'text': {
+                                'content': chunk['text'],
+                                'metadata': chunk['metadata']
+                            }
+                        }
+                        for chunk in relevant_chunks
+                    ],
+                    'conversation_id': conversation_id or str(uuid.uuid4())
+                }
             except Exception as e:
-                logger.error(f"Error generating answer: {str(e)}")
-                answer = "I apologize, but I encountered an error while generating the answer. Please try again."
-
-            # Store in memory
-            if conversation_id:
-                self.memory_service.add_to_conversation(
-                    conversation_id,
-                    question,
-                    answer
-                )
-                logger.info("Stored conversation in memory")
-
-            return {
-                'answer': answer,
-                'confidence': self._calculate_confidence(relevant_chunks),
-                'sources': [
-                    {
-                        'text': chunk['text'],
-                        'metadata': chunk['metadata']
-                    }
-                    for chunk in relevant_chunks
-                ],
-                'conversation_id': conversation_id or str(uuid.uuid4())
-            }
+                logger.error(f"Error generating answer with Gemini: {str(e)}")
+                logger.error(f"Error type: {type(e)}")
+                logger.error(f"Error details: {str(e)}")
+                return {
+                    'answer': "I apologize, but I encountered an error while generating the answer. Please try again.",
+                    'confidence': 0.0,
+                    'sources': [],
+                    'conversation_id': conversation_id or str(uuid.uuid4())
+                }
             
         except Exception as e:
             logger.error(f"Error in answer_question: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error details: {str(e)}")
             return {
                 'answer': "I apologize, but I encountered an error while processing your question. Please try again.",
                 'confidence': 0.0,

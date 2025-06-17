@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     if not GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
     
-    # Vector Database Configuration
-    CHROMA_PERSIST_DIRECTORY: str = "data/chroma"
+    # FAISS Configuration
+    STORAGE_DIRECTORY: str = "data/faiss_storage"
+    FAISS_INDEX_TYPE: str = "FlatL2"  # Options: FlatL2, IVF, HNSW
+    EMBEDDING_DIMENSION: int = 768  # Gemini embedding dimension
     
     # Document Processing Configuration
     CHUNK_SIZE: int = 1000

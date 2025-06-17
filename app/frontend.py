@@ -21,12 +21,13 @@ def main():
     
     if uploaded_file is not None:
         # Save the file temporarily
-        with open(uploaded_file.name, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        # Upload to API
+        temp_file_path = f"temp_{uploaded_file.name}"
         try:
-            with open(uploaded_file.name, "rb") as f:
+            with open(temp_file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # Upload to API
+            with open(temp_file_path, "rb") as f:
                 response = requests.post(
                     f"{API_URL}/api/documents/upload",
                     files={"file": (uploaded_file.name, f)}
@@ -39,8 +40,11 @@ def main():
         
         finally:
             # Clean up
-            if os.path.exists(uploaded_file.name):
-                os.remove(uploaded_file.name)
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except Exception as e:
+                    st.warning(f"Could not delete temporary file: {str(e)}")
     
     # Question answering
     st.header("Ask Questions")
@@ -62,36 +66,30 @@ def main():
                     
                     # Display answer
                     st.subheader("Answer")
-                    st.write(answer_data['text'])
+                    st.write(answer_data.get('answer', 'No answer available'))
                     
                     # Display confidence
-                    st.write(f"Confidence: {answer_data['confidence']:.2%}")
+                    confidence = answer_data.get('confidence', 0.0)
+                    st.write(f"Confidence: {confidence:.2%}")
                     
                     # Display sources
-                    if answer_data['sources']:
+                    sources = answer_data.get('sources', [])
+                    if sources:
                         st.subheader("Sources")
-                        for source in answer_data['sources']:
-                            st.write(f"- {source['text'][:200]}...")
+                        for source in sources:
+                            try:
+                                content = source.get('text', {}).get('content', '')
+                                if content:
+                                    st.write(f"- {content[:200]}...")
+                            except Exception as e:
+                                st.warning(f"Error displaying source: {str(e)}")
                     
-                    # Feedback
-                    st.subheader("Feedback")
-                    rating = st.slider("Rate this answer", 1, 5, 3)
-                    comment = st.text_area("Comments (optional)")
-                    
-                    if st.button("Submit Feedback"):
-                        feedback_response = requests.post(
-                            f"{API_URL}/api/qa/feedback",
-                            json={
-                                "answer_id": answer_data.get('answer_id', ''),
-                                "rating": rating,
-                                "comment": comment
-                            }
-                        )
-                        if feedback_response.status_code == 200:
-                            st.success("Thank you for your feedback!")
+                    # Update conversation history
+                    st.session_state.conversation_id = answer_data.get('conversation_id', st.session_state.conversation_id)
                 
                 else:
-                    st.error("Error getting answer")
+                    error_msg = response.json().get('detail', 'Unknown error occurred')
+                    st.error(f"Error getting answer: {error_msg}")
             
             except Exception as e:
                 st.error(f"Error: {str(e)}")
@@ -115,3 +113,4 @@ def main():
 
 if __name__ == "__main__":
     main() 
+

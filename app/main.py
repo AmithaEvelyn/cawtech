@@ -35,7 +35,7 @@ memory_service = MemoryService()
 # Create necessary directories
 os.makedirs("data/uploads", exist_ok=True)
 os.makedirs("data/memory", exist_ok=True)
-os.makedirs(settings.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
+os.makedirs(settings.STORAGE_DIRECTORY, exist_ok=True)
 
 @app.post("/api/documents/upload")
 async def upload_document(file: UploadFile = File(...)):
@@ -89,18 +89,34 @@ async def upload_document(file: UploadFile = File(...)):
 async def ask_question(question: Question):
     """Ask a question about the documents."""
     try:
+        if not question.text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Question cannot be empty"
+            )
+            
         answer = await qa_service.answer_question(
             question.text,
             question.conversation_id
         )
         
-        return Answer(
-            text=answer['answer'],
-            confidence=answer['confidence'],
-            sources=answer['sources'],
-            conversation_id=answer['conversation_id']
-        )
+        # Validate the answer format
+        try:
+            return Answer(
+                answer=answer['answer'],
+                confidence=answer['confidence'],
+                sources=answer['sources'],
+                conversation_id=answer['conversation_id']
+            )
+        except Exception as e:
+            logger.error(f"Error validating answer format: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Error in answer format"
+            )
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error answering question: {str(e)}")
         raise HTTPException(

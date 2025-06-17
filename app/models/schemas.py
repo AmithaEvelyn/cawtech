@@ -16,9 +16,9 @@ class Question(BaseModel):
     conversation_id: Optional[str] = None
 
 class Answer(BaseModel):
-    text: str
+    answer: str
     confidence: float
-    sources: List[Dict[str, str]]
+    sources: List[Dict[str, Dict]]
     conversation_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
